@@ -57,10 +57,11 @@ from twisted.internet import ssl
 from twisted.internet.protocol import ClientFactory
 from twisted.internet.task import LoopingCall
 
+from threading import Timer
+
 from lib.answer import Answer
 
 import config
-
 
 class triviabot(irc.IRCClient):
     '''
@@ -78,6 +79,8 @@ class triviabot(irc.IRCClient):
         self._admins = list(config.ADMINS)
         self._game_channel = config.GAME_CHANNEL
         self._current_points = 5
+        self._current_answers = {}
+        self._answer_has_winner = False
         self._questions_dir = config.Q_DIR
         self._lc = LoopingCall(self._play_game)
         self._load_game()
@@ -112,10 +115,9 @@ class triviabot(irc.IRCClient):
         '''
         Implements the main loop of the game.
         '''
-        points = {0: 5,
-                  1: 3,
-                  2: 2,
-                  3: 1
+        points = {0: 10,
+                  1: 5,
+                  2: 3
                   }
         if self._clue_number == 0:
             self._votes = 0
@@ -193,8 +195,16 @@ class triviabot(irc.IRCClient):
             # if not, try to match the message to the answer.
             else:
                 if msg.lower().strip() == self._answer.answer.lower():
-                    self._winner(user, channel)
-                    self._save_game()
+                    if self._answer_has_winner:
+                        if not user in self._current_answers:
+                            self._current_answers[user] = msg.lower().strip()
+                    else:
+                        self._answer_has_winner = True
+                        def and_the_winner_is():
+                            self._winner(user, channel)
+                            self._save_game()
+                        t = Timer(1.0, and_the_winner_is);
+                        t.start()
         except:
             return
 
@@ -208,17 +218,28 @@ class triviabot(irc.IRCClient):
                      "I'm sorry, answers must be given in the game channel.")
             return
         self._gmsg("%s GOT IT!" % user.upper())
+
+        score = self._current_points
+        other_right_answers = len(self._current_answers.values())
+
+        if other_right_answers > 0:
+            score /= other_right_answers + 1
+            users = ", ".join(self._current_answers.keys())
+            self._gmsg("but %s too..." % users)
+
         try:
-            self._scores[user] += self._current_points
+            self._scores[user] += score
         except:
-            self._scores[user] = self._current_points
-        if self._current_points == 1:
+            self._scores[user] = score
+        if score == 1:
             self._gmsg("%s point has been added to your score!" %
-                       str(self._current_points))
+                       str(score))
         else:
             self._gmsg("%s points have been added to your score!" %
-                       str(self._current_points))
+                       str(score))
         self._clue_number = 0
+        self._current_answers = {}
+        self._answer_has_winner = False
         self._get_new_question()
 
     def ctcpQuery(self, user, channel, msg):
@@ -490,7 +511,7 @@ class ircbotFactory(ClientFactory):
 
 if __name__ == "__main__":
     # these two lines do the irc connection over ssl.
-    reactor.connectSSL(config.SERVER, config.SERVER_PORT,
-                       ircbotFactory(), ssl.ClientContextFactory())
-    # reactor.connectTCP(config.SERVER, config.SERVER_PORT, ircbotFactory())
+    # reactor.connectSSL(config.SERVER, config.SERVER_PORT,
+    #                    ircbotFactory(), ssl.ClientContextFactory())
+    reactor.connectTCP(config.SERVER, config.SERVER_PORT, ircbotFactory())
     reactor.run()

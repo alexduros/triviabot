@@ -3,3 +3,4 @@ savedata/*
 __pycache__/*
 *.pyc
 .ropeproject
+questions_tests/*
